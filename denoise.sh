@@ -1,0 +1,1 @@
+python3 denoise.py -c config/ct_denoise.json --save

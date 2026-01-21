@@ -1,0 +1,148 @@
+26-01-21 16:15:22.782 - INFO:   name: mayo_ct_denoise
+  phase: train
+  gpu_ids: [0]
+  path:[
+    log: experiments/mayo_ct_denoise_260121_161522/logs
+    tb_logger: experiments/mayo_ct_denoise_260121_161522/tb_logger
+    results: experiments/mayo_ct_denoise_260121_161522/results
+    checkpoint: experiments/mayo_ct_denoise_260121_161522/checkpoint
+    resume_state: None
+    experiments_root: experiments/mayo_ct_denoise_260121_161522
+  ]
+  datasets:[
+    train:[
+      name: mayo_ct
+      dataroot: /host/d/file/new/mayo/Patient_lists/mayo_low_dose_CT_gaussian_simulation_v2.xlsx
+      data_root: /host/d/file/new/mayo/
+      teacher_n2n_root: /host/d/file/new/mayo/noise2noise data/gaussian_noise/pred_images_input_both
+      teacher_n2n_epoch: 70
+      num_slices: 100
+      train_batches: ['test']
+      val_batches: ['test']
+      patient_ids: ['L192']
+      slice_range: None
+      phase: train
+      padding: 3
+      val_volume_idx: all
+      val_slice_idx: 25
+      batch_size: 1
+      in_channel: 1
+      num_workers: 4
+      use_shuffle: True
+      image_size: 512
+      lr_flip: 0.5
+      HU_MIN: -200.0
+      HU_MAX: 250.0
+    ]
+    val:[
+      name: mayo_ct
+      dataroot: /host/d/file/new/mayo/Patient_lists/mayo_low_dose_CT_gaussian_simulation_v2.xlsx
+      data_root: /host/d/file/new/mayo/
+      teacher_n2n_root: /host/d/file/new/mayo/noise2noise data/gaussian_noise/pred_images_input_both
+      teacher_n2n_epoch: 70
+      num_slices: 100
+      train_batches: ['test']
+      val_batches: ['test']
+      patient_ids: ['L192']
+      slice_range: None
+      phase: val
+      padding: 3
+      val_volume_idx: all
+      val_slice_idx: 25
+      batch_size: 1
+      in_channel: 1
+      num_workers: 0
+      image_size: 512
+      lr_flip: 0.0
+      HU_MIN: -200.0
+      HU_MAX: 250.0
+      data_len: 3
+    ]
+  ]
+  model:[
+    which_model_G: mri
+    finetune_norm: False
+    drop_rate: 0.0
+    unet:[
+      in_channel: 1
+      out_channel: 1
+      inner_channel: 32
+      norm_groups: 32
+      channel_multiplier: [1, 2, 4, 8, 8]
+      attn_res: [16]
+      res_blocks: 2
+      dropout: 0.0
+      version: v1
+    ]
+    beta_schedule:[
+      train:[
+        schedule: rev_warmup70
+        n_timestep: 1000
+        linear_start: 5e-05
+        linear_end: 0.01
+      ]
+      val:[
+        schedule: rev_warmup70
+        n_timestep: 1000
+        linear_start: 5e-05
+        linear_end: 0.01
+      ]
+    ]
+    diffusion:[
+      image_size: 512
+      channels: 1
+      conditional: True
+    ]
+  ]
+  train:[
+    n_iter: 100000
+    val_freq: 1000
+    save_checkpoint_freq: 10000
+    print_freq: 100
+    optimizer:[
+      type: adam
+      lr: 0.0001
+    ]
+    ema_scheduler:[
+      step_start_ema: 5000
+      update_ema_every: 1
+      ema_decay: 0.9999
+    ]
+  ]
+  noise_model:[
+    resume_state: None
+    initial_stage_file: None
+    drop_rate: 0.0
+    unet:[
+      in_channel: 2
+      out_channel: 1
+      inner_channel: 32
+      norm_groups: 32
+      channel_multiplier: [1, 2, 4, 8, 8]
+      attn_res: [16]
+      res_blocks: 2
+      dropout: 0.0
+      version: v1
+    ]
+    beta_schedule:[
+      linear_start: 5e-05
+      linear_end: 0.01
+    ]
+    n_iter: 50000
+    val_freq: 2000
+    save_checkpoint_freq: 10000
+    print_freq: 100
+    optimizer:[
+      type: adam
+      lr: 0.0001
+    ]
+  ]
+  stage2_file: experiments/mayo_ct_denoise_teacher/stage2_matched.txt
+  distributed: False
+
+26-01-21 16:15:23.342 - INFO: Mayo CT dataset [mayo_ct] is created. Size: 100
+26-01-21 16:15:23.391 - INFO: Mayo CT dataset [mayo_ct] is created. Size: 1
+26-01-21 16:15:23.391 - INFO: Initial Dataset Finished
+26-01-21 16:15:25.319 - INFO: Initialization method [orthogonal]
+26-01-21 16:15:26.048 - INFO: [DDM2] is created.
+26-01-21 16:15:26.049 - INFO: Initial Model Finished

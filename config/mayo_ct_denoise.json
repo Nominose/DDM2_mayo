@@ -63,7 +63,6 @@
     "which_model_G": "mri",
     "finetune_norm": false,
     "drop_rate": 0.0,
-    "loss_type": "l2",
     "unet": {
       "in_channel": 1,
       "out_channel": 1,

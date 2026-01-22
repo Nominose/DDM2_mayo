@@ -394,7 +394,7 @@ class GaussianDiffusion(nn.Module):
         x_recon = self.denoisor(x_noisy, continuous_sqrt_alpha_cumprod)
 
         # J-Invariance optimization
-        total_loss = self.mseloss(x_recon, x_in['X'])
+        total_loss = self.mseloss(x_recon, x_in['denoised'])
 
         if debug:
             return_dict = dict(total_loss=total_loss, debug_results=debug_results)

@@ -19,7 +19,7 @@
       "num_slices": 240,
       "train_batches": ["test"],
       "val_batches": ["test"],
-      "patient_ids": ["L192"],
+      "patient_ids": ["L291"],
       "slice_range": [150, 200],
       "phase": "train",
       "padding": 3,
@@ -43,7 +43,7 @@
       "num_slices": 240,
       "train_batches": ["test"],
       "val_batches": ["test"],
-      "patient_ids": ["L192"],
+      "patient_ids": ["L291"],
       "slice_range": [150, 200],
       "phase": "val",
       "padding": 3,
@@ -137,5 +137,5 @@
       "lr": 0.0001
     }
   },
-  "stage2_file": "experiments/mayo_ct_denoise_teacher/stage2_matched.txt"
+  "stage2_file": "experiments/mayo_ct_denoise_teacher/stage2_L291.txt"
 }

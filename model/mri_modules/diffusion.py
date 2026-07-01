@@ -393,7 +393,8 @@ class GaussianDiffusion(nn.Module):
         
         x_recon = self.denoisor(x_noisy, continuous_sqrt_alpha_cumprod)
 
-        # J-Invariance optimization
+        # 用 N2N teacher 作 J~ 时, 目标设成 teacher (扩散蒸馏 teacher) -> 稳定;
+        # self-sup 的 X 目标只在 J~ 来自自训 Stage1 时才适用, 强 teacher 下会发散。
         total_loss = self.mseloss(x_recon, x_in['denoised'])
 
         if debug:

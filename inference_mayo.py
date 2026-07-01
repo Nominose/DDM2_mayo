@@ -3,7 +3,7 @@ DDM2 Inference Script for Mayo CT Dataset
 生成完整的 100 slice nii.gz 文件
 
 Usage:
-    python inference_mayo.py -c config/mayo_ct_denoise.json --patient_id L291
+    python inference_mayo.py -c config/mayo_ct_denoise.json --patient_id L192
     python inference_mayo.py -c config/mayo_ct_denoise.json --patient_idx 0
 """
 
@@ -172,7 +172,8 @@ def main():
     # 获取 affine（尝试从原始文件获取）
     affine = np.eye(4)
     if hasattr(val_set, 'data_list') and len(val_set.data_list) > 0:
-        noise_path = val_set.data_list[0].get('noise_file')
+        # 新 dataloader 的 data_list 用 odd/even/all 键 (不再有 noise_file)
+        noise_path = val_set.data_list[0].get('all') or val_set.data_list[0].get('odd')
         if noise_path and hasattr(val_set, '_fix_path'):
             noise_path = val_set._fix_path(noise_path)
         if noise_path and os.path.exists(noise_path):

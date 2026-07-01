@@ -4,7 +4,7 @@ DDM2 Evaluation Script for Mayo CT Dataset
 
 Usage:
     # 评估单个患者
-    python eval_mayo.py --patient_id L143
+    python eval_mayo.py --patient_id L192
     
     # 评估所有val患者
     python eval_mayo.py --batch val
@@ -22,22 +22,27 @@ import argparse
 # ============================================================================
 # 路径配置 - 修改为你的本地路径
 # ============================================================================
-EXCEL_PATH = '/host/d/file/new/mayo/Patient_lists/mayo_low_dose_CT_gaussian_simulation_v2.xlsx'
-DATA_ROOT = '/host/d/file/new/mayo/'  # 用于替换 /host/d/Data/
+# 新高噪声数据 (Option A)。路径用 /host/d/ 约定 (=docker; Windows 原生跑则设 DATA_ROOT='D:/research/')
+EXCEL_PATH = '/host/d/research/新mayo_data/mayo_low_dose_CT_highnoise_v2_ddm2.xlsx'
+DATA_ROOT = None  # None=直通(docker, /host/d=D:\); Windows 原生跑设 'D:/'
 
-# N2N 结果路径
-N2N_ROOT = '/host/d/file/new/mayo/noise2noise data/gaussian_noise/pred_images_input_both'
-N2N_EPOCH = 70
+# N2N 结果路径 (新数据 epoch50, 只有 test 病人有; 缺失自动跳过)
+N2N_ROOT = '/host/d/research/新mayo_data/noise2noise数据'
+N2N_EPOCH = 50
 
-# DDM2 结果路径
-DDM2_ROOT = 'experiments/mayo_ct_denoise/inference'
+# DDM2 结果路径: None=自动找最新的 experiments/*mayo*/inference (inference_mayo.py 的带时间戳输出)
+DDM2_ROOT = None
 
-# GT 路径
-GT_ROOT = '/host/d/file/new/mayo/original_imgs'
+# GT 路径 (与主方法一致: 整卷 img.nii.gz; 这里用老 original_imgs, 同一份 GT)
+GT_ROOT = '/host/d/research/file/new/mayo/original_imgs'
 
-# 评估窗口
+# 评估窗口 (与主方法/论文一致: 低剂量腹部 CT = [-160,240] HU)
 vmin = -160
 vmax = 240
+
+# 评估切片范围 (与本次高噪声数据生成范围一致: 150-200)
+EVAL_SLICE_START = 150
+EVAL_SLICE_END = 200
 
 
 
@@ -114,10 +119,30 @@ def calc_lpips(imgs1, imgs2, vmin, vmax, loss_fn):
 
 
 def fix_path(path, data_root):
-    """替换路径前缀"""
-    if path and '/host/d/Data/' in path:
-        return path.replace('/host/d/Data/', data_root)
+    """替换路径前缀。data_root=None 时直通(docker /host/d=D:\\research);Windows 设 'D:/research/'"""
+    if path and data_root and '/host/d/' in path:
+        return path.replace('/host/d/', data_root)
     return path
+
+
+def crop_eval_slices(vol, start, end):
+    """裁到评估切片范围: 整卷(>=end 层)裁 [start:end]; 已裁好的(更少层)原样返回。"""
+    if vol.shape[-1] >= end:
+        return vol[:, :, start:end]
+    return vol
+
+
+def find_latest_inference(experiments_dir='experiments'):
+    """自动找最新的 experiments/*mayo*/inference 目录 (inference_mayo.py 带时间戳的输出)。"""
+    if not os.path.isdir(experiments_dir):
+        return None
+    latest, latest_t = None, 0
+    for d in os.listdir(experiments_dir):
+        if 'mayo' in d.lower():
+            inf = os.path.join(experiments_dir, d, 'inference')
+            if os.path.isdir(inf) and os.path.getmtime(inf) > latest_t:
+                latest_t, latest = os.path.getmtime(inf), inf
+    return latest
 
 
 # ============================================================================
@@ -135,7 +160,14 @@ if __name__ == '__main__':
     parser.add_argument('--ddm2_root', type=str, default=DDM2_ROOT, help='DDM2 root directory')
     parser.add_argument('--output', type=str, default='mayo_ddm2_results.xlsx', help='Output Excel file')
     args = parser.parse_args()
-    
+
+    # 解析 ddm2_root: 未指定则自动找最新的 inference 目录 (带时间戳)
+    if args.ddm2_root is None:
+        args.ddm2_root = find_latest_inference()
+        print(f"[auto] ddm2_root = {args.ddm2_root}")
+    if args.ddm2_root is None:
+        print("[WARNING] 未找到 inference 目录, DDM2 指标会是 NaN (先跑 inference_mayo.py)")
+
     # 加载 LPIPS 模型
     print("Loading LPIPS model...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -163,14 +195,14 @@ if __name__ == '__main__':
         print(f"\n[{i+1}/{len(df)}] Patient: {patient_id}")
         
         # ========== 构建路径 ==========
-        # GT (ground truth): {gt_root}/{patient_id}/img_sliced.nii.gz
-        gt_file = os.path.join(args.gt_root, str(patient_id), 'img_sliced.nii.gz')
+        # GT (与主方法一致): 整卷 img.nii.gz, 评估时裁到 [EVAL_SLICE_START:EVAL_SLICE_END]
+        gt_file = os.path.join(args.gt_root, str(patient_id), 'img.nii.gz')
         if not os.path.exists(gt_file):
             print(f"  [SKIP] GT not found: {gt_file}")
             continue
-        
-        # Noisy (simulation input)
-        noisy_file = fix_path(row['noise_file'], args.data_root)
+
+        # Noisy (simulation input): 新 Excel 列名是 simulation_file_all
+        noisy_file = fix_path(row['simulation_file_all'], args.data_root)
         if not os.path.exists(noisy_file):
             print(f"  [SKIP] Noisy not found: {noisy_file}")
             continue
@@ -187,32 +219,28 @@ if __name__ == '__main__':
         
         # ========== 加载数据 ==========
         print(f"  Loading GT: {gt_file}")
-        gt_img = nb.load(gt_file).get_fdata().astype(np.float32)
-        
+        gt_img = crop_eval_slices(nb.load(gt_file).get_fdata().astype(np.float32), EVAL_SLICE_START, EVAL_SLICE_END)
+
         print(f"  Loading Noisy: {noisy_file}")
-        noisy_img = nb.load(noisy_file).get_fdata().astype(np.float32)
-        
+        noisy_img = crop_eval_slices(nb.load(noisy_file).get_fdata().astype(np.float32), EVAL_SLICE_START, EVAL_SLICE_END)
+
         print(f"  Loading N2N: {n2n_file}")
-        n2n_img = nb.load(n2n_file).get_fdata().astype(np.float32)
-        
-        HU_MIN_EVAL = -200
-        HU_MAX_EVAL = 250
-        gt_img = np.clip(gt_img, HU_MIN_EVAL, HU_MAX_EVAL)
-        noisy_img = np.clip(noisy_img, HU_MIN_EVAL, HU_MAX_EVAL)
-        n2n_img = np.clip(n2n_img, HU_MIN_EVAL, HU_MAX_EVAL)
+        n2n_img = crop_eval_slices(nb.load(n2n_file).get_fdata().astype(np.float32), EVAL_SLICE_START, EVAL_SLICE_END)
+
+        # 不做 [-200,250] 预裁剪 (与主方法一致), 仅靠窗口 mask [vmin,vmax]
 
         ddm2_first_img = None
         ddm2_final_img = None
         
         if os.path.exists(ddm2_first_file):
             print(f"  Loading DDM2 First: {ddm2_first_file}")
-            ddm2_first_img = nb.load(ddm2_first_file).get_fdata().astype(np.float32)
+            ddm2_first_img = crop_eval_slices(nb.load(ddm2_first_file).get_fdata().astype(np.float32), EVAL_SLICE_START, EVAL_SLICE_END)
         else:
             print(f"  [WARNING] DDM2 First not found: {ddm2_first_file}")
         
         if os.path.exists(ddm2_final_file):
             print(f"  Loading DDM2 Final: {ddm2_final_file}")
-            ddm2_final_img = nb.load(ddm2_final_file).get_fdata().astype(np.float32)
+            ddm2_final_img = crop_eval_slices(nb.load(ddm2_final_file).get_fdata().astype(np.float32), EVAL_SLICE_START, EVAL_SLICE_END)
         else:
             print(f"  [WARNING] DDM2 Final not found: {ddm2_final_file}")
         

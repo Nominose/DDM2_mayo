@@ -6,6 +6,7 @@ Mayo CT Dataset for DDM2
 """
 
 import os
+import random
 import numpy as np
 import pandas as pd
 import torch
@@ -70,10 +71,14 @@ class MayoCTDataset(Dataset):
             print(f'[{phase}] Filtering by patient_ids: {patient_ids}')
         
         # 构建数据列表
+        # Option A (忠实 DDM2): noisy-noisy 对 = sinogram 拆分的 odd / even 两个独立重建
         self.data_list = []
         for _, row in self.df.iterrows():
             self.data_list.append({
-                'noise_file': row['noise_file'],
+                'odd': row['simulation_file_odd'],
+                'even': row['simulation_file_even'],
+                'all': row.get('simulation_file_all', None),
+                'gt': row.get('ground_truth_file', None),
                 'patient_id': row['Patient_ID'],
             })
         
@@ -125,15 +130,21 @@ class MayoCTDataset(Dataset):
             self._check_npy_availability()
 
     def _fix_path(self, path):
-        """替换路径前缀"""
-        if self.data_root and path:
-            if '/host/d/Data/' in path:
-                return path.replace('/host/d/Data/', self.data_root)
+        """替换路径前缀。
+        Excel 里用 /host/d/ 约定 (= docker 挂载, /host/d/ -> D:\\research\\)。
+        - data_root 为 None: 直接用 Excel 的绝对路径 (docker 环境)。
+        - data_root 非空: 把 /host/d/ 替换成 data_root (例如 Windows 上设 'D:/research/')。
+        """
+        if not path:
+            return path
+        path = str(path)
+        if self.data_root and '/host/d/' in path:
+            return path.replace('/host/d/', self.data_root)
         return path
 
     def _check_npy_availability(self):
         """检测npy文件可用性"""
-        sample_noise = self._fix_path(self.data_list[0]['noise_file'])
+        sample_noise = self._fix_path(self.data_list[0]['odd'])
         npy_noise = sample_noise.replace('.nii.gz', '.npy') if sample_noise else None
         if npy_noise and os.path.exists(npy_noise):
             print(f'[{self.phase}] ✓ Simulation NPY available: {npy_noise}')
@@ -221,6 +232,29 @@ class MayoCTDataset(Dataset):
         
         return self._preprocess(np.nan_to_num(img.astype(np.float32), 0))
 
+    def _load_teacher_slice(self, path, slice_idx):
+        """加载 N2N teacher 切片 (J~)。
+        teacher 通常是按 slice_range 裁好的体 (如 50 层, 对应 recon 的 150-199),
+        所以用相对索引 slice_idx - slice_range[0]; 若 teacher 是整卷则直接用 slice_idx。
+        """
+        if not path:
+            return None
+        path = self._fix_path(path)
+        npy = path.replace('.nii.gz', '.npy')
+        if os.path.exists(npy):
+            vol = np.load(npy, mmap_mode='r')
+        elif os.path.exists(path):
+            vol = nib.load(path).dataobj
+        else:
+            return None
+        n = int(vol.shape[2])
+        start = self.slice_range[0] if self.slice_range else 0
+        # teacher 比整卷短 => 认为是按 slice_range 裁过的, 用相对索引对齐 recon
+        idx = (slice_idx - start) if n < self.num_slices else slice_idx
+        idx = max(0, min(int(idx), n - 1))
+        img = np.array(vol[:, :, idx])
+        return self._preprocess(np.nan_to_num(img.astype(np.float32), 0))
+
     def __len__(self):
         return len(self.samples)
 
@@ -229,11 +263,16 @@ class MayoCTDataset(Dataset):
         data = self.data_list[vol_idx]
         patient_id = data['patient_id']
 
-        noisy = self._load_slice(data['noise_file'], slice_idx)
+        # X = recon_all (全剂量低剂量重建), 与原版 DDM2_mayo 一致。
+        # loss=denoised 蒸馏路线下 condition 不参与, 用 X 的复制填充 (和原版相同)。
+        # (odd/even 真配对只在 faithful loss=X 路线才用得到。)
+        noisy = self._load_slice(data['all'], slice_idx)
 
-        teacher_path = self._get_teacher_path(patient_id)
-        has_teacher = teacher_path and os.path.exists(self._fix_path(teacher_path))
-        teacher = self._load_slice(teacher_path, slice_idx) if has_teacher else None
+        # J~ 用已有的 N2N teacher。teacher 是按 slice_range 裁好的体,
+        # 用 _load_teacher_slice 做相对索引对齐 recon。设 teacher_n2n_root=null 则退回 Stage1。
+        teacher = None
+        if self.teacher_n2n_root:
+            teacher = self._load_teacher_slice(self._get_teacher_path(patient_id), slice_idx)
 
         cond_ch = 2 * self.padding if self.padding > 0 else 1
         channels = [noisy] * cond_ch + [noisy]
@@ -245,7 +284,7 @@ class MayoCTDataset(Dataset):
         if teacher is not None:
             denoised = raw[[-1], :, :]
             raw = raw[:-1, :, :]
-        
+
         ret = {
             'X': raw[[-1], :, :].float(),
             'condition': raw[:-1, :, :].float(),
@@ -255,6 +294,7 @@ class MayoCTDataset(Dataset):
         if self.matched_state and vol_idx in self.matched_state and slice_idx in self.matched_state[vol_idx]:
             ret['matched_state'] = torch.tensor([float(self.matched_state[vol_idx][slice_idx])])
 
+        # 只有显式提供 teacher 时才注入 denoised; Option A 不注入 -> Stage3 用 denoise_fn(condition)=Stage1
         if self.teacher_n2n_root:
             ret['denoised'] = denoised.float() if teacher is not None else ret['X'].clone()
             if teacher is None:

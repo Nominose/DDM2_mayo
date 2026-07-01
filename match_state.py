@@ -44,6 +44,17 @@ opt = Logger.parse(args)
 
 # Convert to NoneDict, which return None for missing key.
 opt = Logger.dict_to_nonedict(opt)
+
+# match_state 不训练: 不需要 Logger.parse 自动建的时间戳实验夹 (其 checkpoint/results/tb_logger 都是空的)。
+# 把日志改到 stage2 输出所在文件夹, 并删掉刚建的空时间戳夹, 避免每次跑都留垃圾。
+import shutil
+_ts_root = opt['path']['experiments_root']
+_stage2_dir = os.path.dirname(opt['stage2_file'])
+os.makedirs(_stage2_dir, exist_ok=True)
+opt['path']['log'] = _stage2_dir
+if _ts_root and os.path.isdir(_ts_root):
+    shutil.rmtree(_ts_root, ignore_errors=True)
+
 # logging
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark = True
@@ -52,7 +63,7 @@ Logger.setup_logger(None, opt['path']['log'],
                     'train', level=logging.INFO, screen=True)
 Logger.setup_logger('val', opt['path']['log'], 'val', level=logging.INFO)
 logger = logging.getLogger('base')
-logger.info('[Stage 2] Markov chain state matching (using teacher N2N)!')
+logger.info('[Stage 2] Markov chain state matching (existing N2N teacher as J~)!')
 
 # dataset
 for phase, dataset_opt in opt['datasets'].items():
@@ -69,7 +80,8 @@ for phase, dataset_opt in opt['datasets'].items():
             val_set, dataset_opt, phase)
 logger.info('Initial Dataset Finished')
 
-logger.info('Using teacher N2N results from ct_dataset')
+# J~ 直接用已有的 N2N teacher (ct_dataset 已把它装入 data['denoised']), 不训/不加载 Stage1
+logger.info('Using existing N2N teacher as J~ (dataset denoised field)')
 
 #######
 to_torch = partial(torch.tensor, dtype=torch.float32, device='cuda:0')
@@ -90,16 +102,14 @@ stage_file = open(opt['stage2_file'],'w+')
 for _,  data in tqdm(enumerate(val_loader)):
     idx += 1
     
-    # ====== 修复：从 val_set.samples 获取正确的 volume_idx 和 slice_idx ======
+    # 从 val_set.samples 获取正确的 volume_idx 和 slice_idx
     volume_idx, slice_idx = val_set.samples[idx - 1]
-    
-    # ====== 修复：直接使用 ct_dataset 加载的 denoised（已处理 slice 偏移）======
+
+    # J~ = dataset 装入的 N2N teacher (denoised); 缺失则写默认 t=500
     if 'denoised' not in data:
         stage_file.write('%d_%d_%d\n' % (volume_idx, slice_idx, 500))
         continue
-    
     denoised = data['denoised'].cuda()
-    # ========================================================================
 
     max_lh = -1
     max_t = -1
